@@ -95,9 +95,43 @@ pub fn portable_root() -> Option<PathBuf> {
     dir.join("portable.txt").is_file().then(|| dir.join("ArtCraftLauncherData"))
 }
 
+/// Free space, in bytes, on the drive that would hold an install into `folder`, or into the
+/// system's usual place when `folder` is `None`. A folder that doesn't exist yet is measured at
+/// its nearest existing parent. `None` when it can't be found out.
+pub fn free_space(folder: Option<&str>) -> Option<u64> {
+    let folder = match folder.map(str::trim).filter(|f| !f.is_empty()) {
+        Some(folder) => PathBuf::from(folder),
+        None => system_install_folder()?,
+    };
+    let existing = folder.ancestors().find(|p| !p.as_os_str().is_empty() && p.is_dir())?;
+    fs4::available_space(existing).ok()
+}
+
+/// Where new installs go when no folder is chosen: near enough to measure its drive.
+fn system_install_folder() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        Some(PathBuf::from("/Applications"))
+    } else if cfg!(windows) {
+        // Per-user installers go under %LOCALAPPDATA%\Programs.
+        dirs::data_local_dir()
+    } else {
+        dirs::home_dir()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn free_space_is_measured_at_the_nearest_existing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("not").join("made").join("yet");
+        let here = free_space(dir.path().to_str());
+        assert!(here.is_some_and(|bytes| bytes > 0));
+        assert!(free_space(missing.to_str()).is_some());
+        assert!(free_space(None).is_some());
+    }
 
     #[test]
     fn atomic_write_does_not_overwrite_an_unrelated_temporary_file() {

@@ -61,6 +61,11 @@ pub trait Host {
     fn pick_folder(&mut self, _initial: Option<&str>) -> Option<String> {
         None
     }
+    /// Free bytes on the drive an install into `folder` would use (`None`: the system's usual
+    /// place). `None` when it can't be found out.
+    fn free_space(&mut self, _folder: Option<&str>) -> Option<u64> {
+        None
+    }
     /// The URL to open when Discord is clicked. Defaults to the web link.
     fn discord_url(&self) -> &'static str {
         artcraft_launcher_core::catalog::DISCORD_URL
@@ -79,10 +84,20 @@ pub(crate) struct Toast {
 pub(crate) enum Dialog {
     Notes(String),
     ConfirmUninstall(String),
-    Install { app: String, folder: String, make_default: bool },
+    Install { app: String, choice: FolderChoice, folder: String, make_default: bool },
     Replace { app: String, path: String },
     Settings,
     LauncherUpdate(artcraft_launcher_core::Release),
+}
+
+/// Where the Install dialog puts a new app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FolderChoice {
+    /// The default folder from Settings (the system's place when none is set).
+    AppDefault,
+    /// The system's usual place, even when Settings has a default folder.
+    System,
+    Custom,
 }
 
 impl Dialog {
@@ -131,6 +146,9 @@ pub struct LauncherUi {
     pub(crate) detail_shot: usize,
     /// The screenshot is enlarged over the whole window.
     pub(crate) detail_zoom: bool,
+    /// The Install dialog's last free-space reading: the folder asked about (`None`: the system's
+    /// place), the answer, and when it was read.
+    pub(crate) free_space: Option<(Option<String>, Option<u64>, f64)>,
     /// The details pictures the backend has sent (or been asked for), by app and picture key.
     pub(crate) pictures: std::collections::HashMap<(String, String), crate::details::Picture>,
     started: bool,
@@ -209,6 +227,7 @@ impl LauncherUi {
             detail_shown: None,
             detail_shot: 0,
             detail_zoom: false,
+            free_space: None,
             pictures: std::collections::HashMap::new(),
             started: false,
             applied_theme: None,
@@ -311,11 +330,14 @@ impl LauncherUi {
             self.send(Command::Install { app: id.to_string() });
             return;
         }
-        self.dialog = Some(Dialog::Install {
-            app: id.to_string(),
-            folder: self.settings.install_locations.per_app.get(id).cloned().unwrap_or_default(),
-            make_default: false,
-        });
+        let locations = &self.settings.install_locations;
+        let (choice, folder) = match locations.per_app.get(id) {
+            _ if locations.system.contains(id) => (FolderChoice::System, String::new()),
+            Some(folder) => (FolderChoice::Custom, folder.clone()),
+            None if locations.root.is_some() => (FolderChoice::AppDefault, String::new()),
+            None => (FolderChoice::System, String::new()),
+        };
+        self.dialog = Some(Dialog::Install { app: id.to_string(), choice, folder, make_default: false });
     }
 
     /// Non-drawing work: runs every frame and also while the window is hidden in the tray.

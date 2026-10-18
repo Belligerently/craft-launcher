@@ -4,7 +4,7 @@
 //! The UI sends [`Command`]s and drains [`Event`]s once per frame, so backends do their work on
 //! threads (desktop) or futures (web) and never block a frame.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -65,10 +65,15 @@ pub enum Command {
 pub struct InstallLocations {
     pub root: Option<String>,
     pub per_app: BTreeMap<String, String>,
+    /// Apps that go in the system's usual place even when `root` is set.
+    pub system: BTreeSet<String>,
 }
 
 impl InstallLocations {
     pub fn folder(&self, app: &str) -> Option<&str> {
+        if self.system.contains(app) {
+            return None;
+        }
         self.per_app.get(app).map(String::as_str).or(self.root.as_deref())
     }
 }
@@ -278,6 +283,16 @@ mod tests {
         assert_eq!(locations.folder("filmcraft"), Some("/Volumes/Craft"));
         locations.per_app.remove("photocraft");
         assert_eq!(locations.folder("photocraft"), Some("/Volumes/Craft"));
+    }
+
+    #[test]
+    fn an_app_can_keep_the_system_install_location_when_a_default_is_set() {
+        let mut locations = InstallLocations { root: Some("/Volumes/Craft".into()), ..Default::default() };
+        locations.system.insert("photocraft".into());
+        assert_eq!(locations.folder("photocraft"), None);
+        assert_eq!(locations.folder("filmcraft"), Some("/Volumes/Craft"));
+        let old: InstallLocations = serde_json::from_str(r#"{"root":"/Volumes/Craft","per_app":{}}"#).unwrap();
+        assert!(old.system.is_empty());
     }
 
     #[test]

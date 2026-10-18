@@ -442,6 +442,10 @@ impl Host for DesktopHost {
         dialog.pick_folder().and_then(|p| p.to_str().map(str::to_string))
     }
 
+    fn free_space(&mut self, folder: Option<&str>) -> Option<u64> {
+        artcraft_launcher_native::paths::free_space(folder)
+    }
+
     fn reduce_motion(&self) -> bool {
         motion::reduced()
     }
