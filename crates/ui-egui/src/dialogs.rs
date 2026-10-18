@@ -29,7 +29,7 @@ impl LauncherUi {
         let response = match &mut dialog {
             Dialog::Notes(id) => modal.show(ctx, |ui| close = self.notes_dialog(ui, id)),
             Dialog::ConfirmUninstall(id) => modal.show(ctx, |ui| close = self.uninstall_dialog(ui, id)),
-            Dialog::Install { app, folder } => modal.show(ctx, |ui| close = self.install_dialog(ui, app, folder, host)),
+            Dialog::Install { app, folder, make_default } => modal.show(ctx, |ui| close = self.install_dialog(ui, app, folder, make_default, host)),
             Dialog::Replace { app, path } => modal.show(ctx, |ui| close = self.replace_dialog(ui, app, path)),
             Dialog::Settings => modal.show(ctx, |ui| close = self.settings_dialog(ui, host)),
             Dialog::LauncherUpdate(r) => modal.show(ctx, |ui| close = self.launcher_update_dialog(ui, r)),
@@ -228,12 +228,18 @@ impl LauncherUi {
         close
     }
 
-    fn install_dialog(&mut self, ui: &mut egui::Ui, id: &str, folder: &mut String, host: &mut dyn Host) -> bool {
+    fn install_dialog(&mut self, ui: &mut egui::Ui, id: &str, folder: &mut String, make_default: &mut bool, host: &mut dyn Host) -> bool {
         let Some(app) = self.entry(id).map(|e| e.app) else { return true };
         ui.set_width(440.0f32.min(ui.ctx().content_rect().width() - 80.0));
         Self::title(ui, None, app.name, tl!("Install folder"));
         let default = self.settings.install_locations.root.as_deref().unwrap_or(tl!("System default"));
         Self::folder_field(ui, folder, Some(default), host);
+        // Only a folder that isn't already the default can become it.
+        let can_make_default = !folder.is_empty() && self.settings.install_locations.root.as_deref() != Some(folder.as_str());
+        if can_make_default {
+            ui.checkbox(make_default, tl!("Make this my default install folder"));
+            ui.label(tl!("You can change the default anytime in Settings."));
+        }
         if self.platform.is_some_and(|p| p.os == Os::Linux) {
             ui.label(tl!("Custom folders use AppImage on Linux."));
         }
@@ -242,6 +248,10 @@ impl LauncherUi {
         ui.horizontal(|ui| {
             if widgets::button(ui, tl!("Install"), Kind::Primary, 100.0).clicked() {
                 if folder.is_empty() {
+                    self.settings.install_locations.per_app.remove(id);
+                } else if can_make_default && *make_default {
+                    // The app follows the new default rather than keeping its own copy of it.
+                    self.settings.install_locations.root = Some(folder.clone());
                     self.settings.install_locations.per_app.remove(id);
                 } else {
                     self.settings.install_locations.per_app.insert(id.to_string(), folder.clone());

@@ -417,6 +417,69 @@ fn use_default_removes_an_app_override_and_settings_can_reset_the_root() {
     assert_eq!(h.state().as_ref().unwrap().settings.install_locations.root, None);
 }
 
+#[test]
+fn the_install_dialog_can_make_its_folder_the_default_which_settings_can_still_change() {
+    let picked = Rc::new(RefCell::new(None));
+    let (mut h, sent) = folder_harness(picked.clone());
+    h.run_steps(8);
+    h.get_by_label("Install").scroll_to_me();
+    h.run_steps(3);
+    h.get_by_label("Install").click();
+    h.run_steps(3);
+    // No folder typed yet: the system default is already the default.
+    assert!(h.query_by_label("Make this my default install folder").is_none());
+    *picked.borrow_mut() = Some("/Volumes/Craft Apps".into());
+    h.get_by_label("Browse…").click();
+    h.run_steps(3);
+    h.get_by_label("You can change the default anytime in Settings.");
+    h.get_by_label("Make this my default install folder").click();
+    h.run_steps(2);
+    sent.borrow_mut().clear();
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, "Install").last().unwrap().click();
+    h.run_steps(2);
+    let locations = h.state().as_ref().unwrap().settings.install_locations.clone();
+    assert_eq!(locations.root.as_deref(), Some("/Volumes/Craft Apps"));
+    assert!(locations.per_app.is_empty());
+    let commands = install_commands(&sent);
+    assert!(
+        matches!(commands.first(), Some(Command::Configure(options)) if options.install_locations.root.as_deref() == Some("/Volumes/Craft Apps"))
+    );
+    assert_eq!(commands.get(1), Some(&Command::Install { app: "photocraft".into() }));
+
+    h.get_by_label("Settings").click();
+    h.run_steps(4);
+    h.get_by_label("Browse…").scroll_to_me();
+    h.run_steps(4);
+    *picked.borrow_mut() = Some("/Volumes/Elsewhere".into());
+    h.get_by_label("Browse…").click();
+    h.run_steps(3);
+    assert_eq!(h.state().as_ref().unwrap().settings.install_locations.root.as_deref(), Some("/Volumes/Elsewhere"));
+}
+
+#[test]
+fn an_unticked_install_dialog_keeps_the_folder_for_that_app_only() {
+    let picked = Rc::new(RefCell::new(Some("/Volumes/Photo".into())));
+    let (mut h, sent) = folder_harness(picked);
+    h.run_steps(8);
+    h.state_mut().as_mut().unwrap().settings.install_locations.root = Some("/Volumes/Craft Apps".into());
+    h.run_steps(2);
+    h.get_by_label("Install").scroll_to_me();
+    h.run_steps(3);
+    h.get_by_label("Install").click();
+    h.run_steps(3);
+    h.get_by_label("Browse…").click();
+    h.run_steps(3);
+    sent.borrow_mut().clear();
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, "Install").last().unwrap().click();
+    h.run_steps(2);
+    let locations = h.state().as_ref().unwrap().settings.install_locations.clone();
+    assert_eq!(locations.root.as_deref(), Some("/Volumes/Craft Apps"));
+    assert_eq!(locations.folder("photocraft"), Some("/Volumes/Photo"));
+    assert!(
+        matches!(install_commands(&sent).first(), Some(Command::Configure(options)) if options.install_locations.folder("photocraft") == Some("/Volumes/Photo"))
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_package_choice_can_select_portable_and_configures_the_backend() {

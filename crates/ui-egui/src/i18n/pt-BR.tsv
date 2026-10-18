@@ -352,6 +352,8 @@ filter	Installed	Instalados
 @msg	{path} already exists and wasn't installed by ArtCraft Launcher	{path} já existe e não foi instalado pelo ArtCraft Launcher
 @msg	couldn't move {path} to Trash ({reason}). Remove it in Finder instead.	não foi possível mover {path} para o Lixo ({reason}). Remova-o pelo Finder.
 	Apps are placed inside this folder.	Os aplicativos são colocados dentro desta pasta.
+	Make this my default install folder	Usar esta pasta como pasta de instalação padrão
+	You can change the default anytime in Settings.	Você pode alterar a pasta padrão a qualquer momento nas Configurações.
 	Replace what's there?	Substituir o que já existe?
 	{path} already exists. Installing {name} will overwrite it.	{path} já existe. Instalar o {name} vai substituí-lo.
 	Replace	Substituir

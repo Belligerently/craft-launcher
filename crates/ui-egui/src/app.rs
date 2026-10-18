@@ -79,7 +79,7 @@ pub(crate) struct Toast {
 pub(crate) enum Dialog {
     Notes(String),
     ConfirmUninstall(String),
-    Install { app: String, folder: String },
+    Install { app: String, folder: String, make_default: bool },
     Replace { app: String, path: String },
     Settings,
     LauncherUpdate(artcraft_launcher_core::Release),
@@ -311,8 +311,11 @@ impl LauncherUi {
             self.send(Command::Install { app: id.to_string() });
             return;
         }
-        self.dialog =
-            Some(Dialog::Install { app: id.to_string(), folder: self.settings.install_locations.per_app.get(id).cloned().unwrap_or_default() });
+        self.dialog = Some(Dialog::Install {
+            app: id.to_string(),
+            folder: self.settings.install_locations.per_app.get(id).cloned().unwrap_or_default(),
+            make_default: false,
+        });
     }
 
     /// Non-drawing work: runs every frame and also while the window is hidden in the tray.

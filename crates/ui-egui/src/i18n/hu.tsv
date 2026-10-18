@@ -365,6 +365,8 @@ filter	Installed	Telepítve
 @msg	{path} already exists and wasn't installed by ArtCraft Launcher	a(z) {path} már létezik, és nem az ArtCraft Launcher telepítette
 @msg	couldn't move {path} to Trash ({reason}). Remove it in Finder instead.	a(z) {path} nem helyezhető a Kukába ({reason}). Távolítsa el a Finderben.
 	Apps are placed inside this folder.	Az alkalmazások ebbe a mappába kerülnek.
+	Make this my default install folder	Legyen ez az alapértelmezett telepítési mappa
+	You can change the default anytime in Settings.	Az alapértelmezett mappát bármikor módosíthatod a Beállításokban.
 	Replace what's there?	Lecseréli, ami ott van?
 	{path} already exists. Installing {name} will overwrite it.	{path} már létezik. A(z) {name} telepítése felülírja.
 	Replace	Csere
