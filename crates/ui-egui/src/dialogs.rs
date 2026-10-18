@@ -288,7 +288,7 @@ impl LauncherUi {
             FolderChoice::System => None,
             FolderChoice::Custom => custom.clone().or_else(|| root.clone()),
         };
-        self.free_space_note(ui, id, target, host);
+        self.free_space_note(ui, id, target);
         // Only a folder that isn't already the default can become it.
         let can_make_default = custom.as_ref().is_some_and(|f| root.as_ref() != Some(f));
         if can_make_default {
@@ -311,8 +311,8 @@ impl LauncherUi {
                 locations.per_app.remove(id);
                 locations.system.remove(id);
                 match (*choice, custom) {
-                    // Only worth remembering while a default folder would otherwise apply.
-                    (FolderChoice::System, _) if locations.root.is_some() => {
+                    // Kept even with no default folder yet, so setting one later doesn't move it.
+                    (FolderChoice::System, _) => {
                         locations.system.insert(id.to_string());
                     }
                     // The app follows the new default rather than keeping its own copy of it.
@@ -333,14 +333,16 @@ impl LauncherUi {
     }
 
     /// How much room the drive under `target` has, and a warning when the app may not fit.
-    fn free_space_note(&mut self, ui: &mut egui::Ui, id: &str, target: Option<String>, host: &mut dyn Host) {
-        // Asked again when the folder changes, and every few seconds while the dialog is open.
+    fn free_space_note(&mut self, ui: &mut egui::Ui, id: &str, target: Option<String>) {
+        // The backend measures off the UI thread: asked again when the folder changes, and every
+        // few seconds while the dialog is open.
         let now = ui.input(|i| i.time);
-        if self.free_space.as_ref().is_none_or(|(asked, _, at)| *asked != target || now - at > 5.0) {
-            let bytes = host.free_space(target.as_deref());
-            self.free_space = Some((target, bytes, now));
+        if self.free_space_asked.as_ref().is_none_or(|(asked, at)| *asked != target || now - at > 5.0) {
+            self.send(Command::FreeSpace { folder: target.clone() });
+            self.free_space_asked = Some((target.clone(), now));
         }
-        let Some(free) = self.free_space.as_ref().and_then(|(_, bytes, _)| *bytes) else { return };
+        // A late answer for a folder no longer chosen isn't shown.
+        let Some(free) = self.free_space.as_ref().filter(|(folder, _)| *folder == target).and_then(|(_, bytes)| *bytes) else { return };
         let download = self.platform.zip(self.entry(id)).and_then(|(p, entry)| {
             let stems: Vec<&str> = entry.app.stems().collect();
             pick_asset(entry.release()?, &stems, p, p.default_kinds()).map(|(asset, _)| asset.size)

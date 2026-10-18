@@ -100,7 +100,8 @@ pub fn portable_root() -> Option<PathBuf> {
 /// its nearest existing parent. `None` when it can't be found out.
 pub fn free_space(folder: Option<&str>) -> Option<u64> {
     let folder = match folder.map(str::trim).filter(|f| !f.is_empty()) {
-        Some(folder) => PathBuf::from(folder),
+        // The installer turns down a relative path, so there's nothing to measure.
+        Some(folder) => crate::install::expand_home(folder).ok().filter(|p| p.is_absolute())?,
         None => system_install_folder()?,
     };
     let existing = folder.ancestors().find(|p| !p.as_os_str().is_empty() && p.is_dir())?;
@@ -110,10 +111,11 @@ pub fn free_space(folder: Option<&str>) -> Option<u64> {
 /// Where new installs go when no folder is chosen: near enough to measure its drive.
 fn system_install_folder() -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
+        // `/Applications`, or `~/Applications` when that isn't writable: the same volume.
         Some(PathBuf::from("/Applications"))
     } else if cfg!(windows) {
-        // Per-user installers go under %LOCALAPPDATA%\Programs.
-        dirs::data_local_dir()
+        // App MSIs go into `C:\Program Files\<App>` (the 64-bit one, even for a 32-bit launcher).
+        ["ProgramW6432", "ProgramFiles"].into_iter().find_map(std::env::var_os).map(PathBuf::from)
     } else {
         dirs::home_dir()
     }
@@ -131,6 +133,9 @@ mod tests {
         assert!(here.is_some_and(|bytes| bytes > 0));
         assert!(free_space(missing.to_str()).is_some());
         assert!(free_space(None).is_some());
+        // Like the installer, `~/` is the home folder.
+        assert!(free_space(Some("~/not-made-yet")).is_some());
+        assert!(free_space(Some("relative/folder")).is_none());
     }
 
     #[test]

@@ -55,6 +55,11 @@ pub enum Command {
     FetchScreenshots {
         app: String,
     },
+    /// How much room the drive for an install into `folder` (`None`: the system's usual place)
+    /// has, answered with [`Event::FreeSpace`]. A backend that can't tell doesn't answer.
+    FreeSpace {
+        folder: Option<String>,
+    },
     /// Change how the backend behaves.
     Configure(BackendOptions),
 }
@@ -232,6 +237,11 @@ pub enum Event {
         app: String,
         key: String,
         result: Result<Vec<u8>, String>,
+    },
+    /// The answer to [`Command::FreeSpace`] for `folder`: free bytes, or `None` when unknown.
+    FreeSpace {
+        folder: Option<String>,
+        bytes: Option<u64>,
     },
     CheckStarted,
     CheckFinished {

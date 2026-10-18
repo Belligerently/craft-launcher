@@ -998,6 +998,14 @@ impl Backend for NativeBackend {
             }
             Command::UpdateLauncher => self.update_launcher(),
             Command::FetchScreenshots { app } => self.fetch_screenshots(&app),
+            Command::FreeSpace { folder } => {
+                // A network drive can take seconds to answer.
+                let shared = self.shared.clone();
+                std::thread::spawn(move || {
+                    let bytes = crate::paths::free_space(folder.as_deref());
+                    shared.emit(Event::FreeSpace { folder, bytes });
+                });
+            }
             Command::Configure(options) => {
                 let changed_pre = {
                     let mut o = self.shared.options.lock().unwrap_or_else(PoisonError::into_inner);

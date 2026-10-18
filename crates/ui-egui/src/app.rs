@@ -61,11 +61,6 @@ pub trait Host {
     fn pick_folder(&mut self, _initial: Option<&str>) -> Option<String> {
         None
     }
-    /// Free bytes on the drive an install into `folder` would use (`None`: the system's usual
-    /// place). `None` when it can't be found out.
-    fn free_space(&mut self, _folder: Option<&str>) -> Option<u64> {
-        None
-    }
     /// The URL to open when Discord is clicked. Defaults to the web link.
     fn discord_url(&self) -> &'static str {
         artcraft_launcher_core::catalog::DISCORD_URL
@@ -146,9 +141,11 @@ pub struct LauncherUi {
     pub(crate) detail_shot: usize,
     /// The screenshot is enlarged over the whole window.
     pub(crate) detail_zoom: bool,
-    /// The Install dialog's last free-space reading: the folder asked about (`None`: the system's
-    /// place), the answer, and when it was read.
-    pub(crate) free_space: Option<(Option<String>, Option<u64>, f64)>,
+    /// The Install dialog's last free-space request: the folder asked about (`None`: the system's
+    /// place) and when.
+    pub(crate) free_space_asked: Option<(Option<String>, f64)>,
+    /// The backend's latest free-space answer: the folder it is for, and the free bytes.
+    pub(crate) free_space: Option<(Option<String>, Option<u64>)>,
     /// The details pictures the backend has sent (or been asked for), by app and picture key.
     pub(crate) pictures: std::collections::HashMap<(String, String), crate::details::Picture>,
     started: bool,
@@ -227,6 +224,7 @@ impl LauncherUi {
             detail_shown: None,
             detail_shot: 0,
             detail_zoom: false,
+            free_space_asked: None,
             free_space: None,
             pictures: std::collections::HashMap::new(),
             started: false,
@@ -334,8 +332,8 @@ impl LauncherUi {
         let (choice, folder) = match locations.per_app.get(id) {
             _ if locations.system.contains(id) => (FolderChoice::System, String::new()),
             Some(folder) => (FolderChoice::Custom, folder.clone()),
-            None if locations.root.is_some() => (FolderChoice::AppDefault, String::new()),
-            None => (FolderChoice::System, String::new()),
+            // Nothing chosen for this app yet: it follows the default, whatever that becomes.
+            None => (FolderChoice::AppDefault, String::new()),
         };
         self.dialog = Some(Dialog::Install { app: id.to_string(), choice, folder, make_default: false });
     }
@@ -400,6 +398,10 @@ impl LauncherUi {
             }
             Event::Screenshot { app, key, result } => {
                 self.pictures.insert((app, key), crate::details::Picture::from_result(result));
+                true
+            }
+            Event::FreeSpace { folder, bytes } => {
+                self.free_space = Some((folder, bytes));
                 true
             }
             Event::Detected { app, installed } => {

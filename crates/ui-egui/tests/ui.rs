@@ -298,29 +298,63 @@ fn snapshot(h: &mut Harness<'_, Option<LauncherUi>>, name: &str) {
 }
 
 fn folder_harness(picked: Rc<RefCell<Option<String>>>) -> (Harness<'static, Option<LauncherUi>>, Rc<RefCell<Vec<Command>>>) {
-    folder_harness_with_space(picked, Rc::new(RefCell::new(Vec::new())), None)
+    folder_harness_with_space(picked, FreeSpace::default())
 }
 
-/// Like `folder_harness`, with the host reporting `free` bytes on every drive and noting the
-/// folders it was asked about in `asked`.
+/// How the fake backend answers free-space requests in `folder_harness_with_space`.
+#[derive(Clone, Default)]
+struct FreeSpace {
+    /// The folders asked about, in order.
+    asked: Rc<RefCell<Vec<Option<String>>>>,
+    /// Answered at once with this many free bytes; `None` leaves the answers to `replies`.
+    free: Option<u64>,
+    /// Events the test hands the UI on the next poll.
+    replies: Rc<RefCell<Vec<Event>>>,
+}
+
+/// Answers `Command::FreeSpace` as a `FreeSpace` says, and passes everything else on.
+struct SpaceFake {
+    inner: Fake,
+    space: FreeSpace,
+}
+impl Backend for SpaceFake {
+    fn send(&mut self, command: Command) {
+        let Command::FreeSpace { folder } = command else { return self.inner.send(command) };
+        self.space.asked.borrow_mut().push(folder.clone());
+        if let Some(bytes) = self.space.free {
+            self.space.replies.borrow_mut().push(Event::FreeSpace { folder, bytes: Some(bytes) });
+        }
+    }
+    fn poll(&mut self) -> Vec<Event> {
+        let mut events = self.inner.poll();
+        events.append(&mut self.space.replies.borrow_mut());
+        events
+    }
+    fn capabilities(&self) -> Capabilities {
+        self.inner.capabilities()
+    }
+    fn platform(&self) -> Option<Platform> {
+        self.inner.platform()
+    }
+    fn now(&self) -> i64 {
+        self.inner.now()
+    }
+}
+
+/// Like `folder_harness`, with free-space requests answered as `space` says.
 fn folder_harness_with_space(
     picked: Rc<RefCell<Option<String>>>,
-    asked: Rc<RefCell<Vec<Option<String>>>>,
-    free: Option<u64>,
+    space: FreeSpace,
 ) -> (Harness<'static, Option<LauncherUi>>, Rc<RefCell<Vec<Command>>>) {
-    struct Picker(Rc<RefCell<Option<String>>>, Rc<RefCell<Vec<Option<String>>>>, Option<u64>);
+    struct Picker(Rc<RefCell<Option<String>>>);
     impl Host for Picker {
         fn pick_folder(&mut self, _initial: Option<&str>) -> Option<String> {
             self.0.borrow_mut().take()
         }
-        fn free_space(&mut self, folder: Option<&str>) -> Option<u64> {
-            self.1.borrow_mut().push(folder.map(str::to_string));
-            self.2
-        }
     }
     artcraft_launcher_ui_egui::i18n::set_test_lang(artcraft_launcher_ui_egui::i18n::Lang::EN);
     let sent = Rc::new(RefCell::new(Vec::new()));
-    let mut backend = Some(Fake {
+    let fake = Fake {
         events: vec![
             Event::Latest { app: "photocraft".into(), latest: LatestRelease::Found(release("photocraft", "0.6.0", NOW)), from: Origin::GitHub },
             Event::Detected { app: "photocraft".into(), installed: None },
@@ -330,8 +364,9 @@ fn folder_harness_with_space(
         pictures: Rc::default(),
         asked: vec![],
         clock: Rc::new(Cell::new(NOW)),
-    });
-    let mut host = Picker(picked, asked, free);
+    };
+    let mut backend = Some(SpaceFake { inner: fake, space });
+    let mut host = Picker(picked);
     let harness = Harness::builder().with_size(egui::vec2(1180.0, 900.0)).build_ui_state(
         move |ui, state: &mut Option<LauncherUi>| {
             if let Some(backend) = backend.take() {
@@ -348,7 +383,7 @@ fn folder_harness_with_space(
 }
 
 fn install_commands(sent: &RefCell<Vec<Command>>) -> Vec<Command> {
-    sent.borrow().iter().filter(|c| !matches!(c, Command::CheckForUpdates { .. })).cloned().collect()
+    sent.borrow().iter().filter(|c| !matches!(c, Command::CheckForUpdates { .. } | Command::FreeSpace { .. })).cloned().collect()
 }
 
 #[test]
@@ -448,8 +483,8 @@ fn the_install_dialog_can_make_its_folder_the_default_which_settings_can_still_c
     h.run_steps(3);
     h.get_by_label("Install").click();
     h.run_steps(3);
-    // No default folder yet, so the dialog starts on the system default.
-    h.get_by_label("The system's usual place for apps.");
+    // Nothing chosen yet, so the dialog follows the default, which is still the system's place.
+    h.get_by_label("No default folder is set, so this is the same as the system default.");
     h.get_by_label("Custom folder").click();
     h.run_steps(3);
     // No folder typed yet: the system default is already the default.
@@ -544,9 +579,27 @@ fn the_install_dialog_can_pick_the_system_default_over_the_app_default() {
 }
 
 #[test]
+fn the_system_default_is_kept_when_a_default_folder_is_set_later() {
+    let (mut h, _sent) = folder_harness(Rc::new(RefCell::new(None)));
+    h.run_steps(8);
+    h.get_by_label("Install").scroll_to_me();
+    h.run_steps(3);
+    h.get_by_label("Install").click();
+    h.run_steps(3);
+    h.get_by_label("System default").click();
+    h.run_steps(3);
+    h.get_all_by_role_and_label(egui::accesskit::Role::Button, "Install").last().unwrap().click();
+    h.run_steps(2);
+    h.state_mut().as_mut().unwrap().settings.install_locations.root = Some("/Volumes/Craft Apps".into());
+    h.run_steps(2);
+    assert_eq!(h.state().as_ref().unwrap().settings.install_locations.folder("photocraft"), None);
+}
+
+#[test]
 fn the_install_dialog_shows_free_space_for_the_chosen_folder() {
-    let asked = Rc::new(RefCell::new(Vec::new()));
-    let (mut h, _sent) = folder_harness_with_space(Rc::new(RefCell::new(None)), asked.clone(), Some(64 << 30));
+    let space = FreeSpace { free: Some(64 << 30), ..Default::default() };
+    let asked = space.asked.clone();
+    let (mut h, _sent) = folder_harness_with_space(Rc::new(RefCell::new(None)), space);
     h.run_steps(8);
     h.state_mut().as_mut().unwrap().settings.install_locations.root = Some("/Volumes/Craft Apps".into());
     h.run_steps(2);
@@ -566,7 +619,7 @@ fn the_install_dialog_shows_free_space_for_the_chosen_folder() {
 #[test]
 fn the_install_dialog_warns_when_the_drive_is_nearly_full() {
     // The download is 150 MB; unpacking needs about as much again.
-    let (mut h, sent) = folder_harness_with_space(Rc::new(RefCell::new(None)), Rc::new(RefCell::new(Vec::new())), Some(200 << 20));
+    let (mut h, sent) = folder_harness_with_space(Rc::new(RefCell::new(None)), FreeSpace { free: Some(200 << 20), ..Default::default() });
     h.run_steps(8);
     h.get_by_label("Install").scroll_to_me();
     h.run_steps(3);
@@ -591,6 +644,29 @@ fn an_unknown_amount_of_free_space_shows_nothing() {
     h.run_steps(3);
     assert!(h.query_by_label_contains("free on this drive").is_none());
     assert!(h.query_by_label_contains("may not have enough space").is_none());
+}
+
+#[test]
+fn a_late_free_space_answer_for_another_folder_is_not_shown() {
+    let space = FreeSpace::default();
+    let replies = space.replies.clone();
+    let (mut h, _sent) = folder_harness_with_space(Rc::new(RefCell::new(None)), space);
+    h.run_steps(8);
+    h.state_mut().as_mut().unwrap().settings.install_locations.root = Some("/Volumes/Craft Apps".into());
+    h.run_steps(2);
+    h.get_by_label("Install").scroll_to_me();
+    h.run_steps(3);
+    h.get_by_label("Install").click();
+    h.run_steps(3);
+    h.get_by_label("System default").click();
+    h.run_steps(3);
+    // The answer for the app default folder arrives after the system default was chosen.
+    replies.borrow_mut().push(Event::FreeSpace { folder: Some("/Volumes/Craft Apps".into()), bytes: Some(64 << 30) });
+    h.run_steps(3);
+    assert!(h.query_by_label_contains("free on this drive").is_none());
+    replies.borrow_mut().push(Event::FreeSpace { folder: None, bytes: Some(64 << 30) });
+    h.run_steps(3);
+    h.get_by_label_contains("free on this drive");
 }
 
 #[test]
@@ -760,10 +836,10 @@ fn a_kept_download_offers_retry_install_and_download_again() {
     let row = retry.rect();
     retry.click();
     h.run_steps(3);
-    assert!(sent.borrow().is_empty());
+    assert!(install_commands(&sent).is_empty());
     h.get_all_by_role_and_label(egui::accesskit::Role::Button, "Install").last().unwrap().click();
     h.run_steps(2);
-    assert_eq!(*sent.borrow(), [Command::Install { app: "cadcraft".into() }]);
+    assert_eq!(install_commands(&sent), [Command::Install { app: "cadcraft".into() }]);
     sent.borrow_mut().clear();
     // The … menu beside it.
     let beside = |r: egui::Rect| row.y_range().contains(r.center().y) && (row.right()..row.right() + 60.0).contains(&r.left());
@@ -772,10 +848,10 @@ fn a_kept_download_offers_retry_install_and_download_again() {
     snapshot(&mut h, "grid-retry-install-menu-dark");
     h.get_by_label("Download again").click();
     h.run_steps(3);
-    assert_eq!(*sent.borrow(), [Command::Cancel { app: "cadcraft".into() }]);
+    assert_eq!(install_commands(&sent), [Command::Cancel { app: "cadcraft".into() }]);
     h.get_all_by_role_and_label(egui::accesskit::Role::Button, "Install").last().unwrap().click();
     h.run_steps(2);
-    assert_eq!(*sent.borrow(), [Command::Cancel { app: "cadcraft".into() }, Command::Install { app: "cadcraft".into() }]);
+    assert_eq!(install_commands(&sent), [Command::Cancel { app: "cadcraft".into() }, Command::Install { app: "cadcraft".into() }]);
     // Apps without a kept download don't offer it.
     assert_eq!(h.query_all_by_label("Retry install").count(), 1);
 }
